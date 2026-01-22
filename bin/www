@@ -1,0 +1,64 @@
+#!/usr/bin/env node
+require("dotenv").config();
+
+const app = require("../app");
+const debug = require("debug")("cbi-api:server");
+const http = require("http");
+const { sequelize } = require("../models");
+
+const port = normalizePort(process.env.PORT || "4000");
+app.set("port", port);
+
+const server = http.createServer(app);
+
+(async function start() {
+  try {
+    console.log("⏳ Connecting to DB...");
+    await sequelize.authenticate();
+    console.log("✅ DB connection OK");
+
+    // dev uniquement (mets DB_SYNC=true dans .env)
+    if (
+      process.env.DB_SYNC === "true" ||
+      process.env.NODE_ENV === "development"
+    ) {
+      console.log("⏳ Sync models (alter)…");
+      await sequelize.sync({ alter: true });
+      console.log("✅ DB synced");
+    }
+
+    server.listen(port);
+    server.on("error", onError);
+    server.on("listening", onListening);
+  } catch (err) {
+    console.error("❌ DB init failed:", err);
+    process.exit(1);
+  }
+})();
+
+function normalizePort(val) {
+  const p = parseInt(val, 10);
+  if (isNaN(p)) return val;
+  if (p >= 0) return p;
+  return false;
+}
+function onError(error) {
+  if (error.syscall !== "listen") throw error;
+  const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
+  switch (error.code) {
+    case "EACCES":
+      console.error(bind + " requires elevated privileges");
+      process.exit(1);
+    case "EADDRINUSE":
+      console.error(bind + " is already in use");
+      process.exit(1);
+    default:
+      throw error;
+  }
+}
+function onListening() {
+  const addr = server.address();
+  const bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
+  debug("Listening on " + bind);
+  console.log("✅ API running on", bind);
+}
