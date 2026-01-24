@@ -1,14 +1,11 @@
-// routes/frp.routes.js
-const router = require("express").Router();
-const frp = require("../controllers/frp.controller");
-const authRequired = require("../middleware/authRequired");
+const express = require("express");
+const Frp = require("../controllers/frp.controller");
+const authRequired = require("../middleware/authRequired"); // <-- ton middleware JWT
 
-router.post("/design", frp.design);
+const router = express.Router();
 
-// ✅ calcule + save (USER connecté obligatoire)
-router.post("/designsave", authRequired, frp.designAndSave);
-
-// ✅ historique (USER connecté obligatoire)
-router.get("/calculations", authRequired, frp.list);
+router.post("/design", Frp.design); // public
+router.post("/designsave", authRequired, Frp.designAndSave); // <-- protégé
+router.get("/list", authRequired, Frp.list); // <-- protégé
 
 module.exports = router;

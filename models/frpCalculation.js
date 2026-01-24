@@ -7,11 +7,12 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
       },
-      userId: {
-        type: DataTypes.UUID,
-        allowNull: true,
-        field: "user_id",
-      },
+     userId: {
+  type: DataTypes.UUID,
+  allowNull: false, // ✅ au lieu de true
+  field: "user_id",
+},
+
       elementType: {
         type: DataTypes.ENUM("dalle", "poutre"),
         allowNull: false,
