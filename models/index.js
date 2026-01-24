@@ -14,5 +14,5 @@ const sequelize = new Sequelize(
 );
 
 const User = require('./user')(sequelize, DataTypes);
-
-module.exports = { sequelize, Sequelize, User };
+const FrpCalculation = require("./frpCalculation")(sequelize, DataTypes);
+module.exports = { sequelize, Sequelize, User,FrpCalculation  };
