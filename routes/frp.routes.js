@@ -3,7 +3,7 @@ const router = require("express").Router();
 const frp = require("../controllers/frp.controller");
 const authRequired = require("../middleware/authRequired");
 
-//router.post("/design", frp.design);
+router.post("/design", frp.design);
 
 // ✅ calcule + save (USER connecté obligatoire)
 router.post("/designsave", authRequired, frp.designAndSave);

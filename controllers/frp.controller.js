@@ -25,14 +25,31 @@ exports.designAndSave = async (req, res) => {
   }
 };
 
-
+exports.design = (req, res) => {
+  try {
+    const out = computeAll(req.body || {});
+    return res.json({ ok: true, data: out });
+  } catch (e) {
+    console.error(e);
+    return res.status(400).json({ ok: false, error: e.message });
+  }
+};
 
 exports.list = async (req, res) => {
-  const userId = req.user.id; // ✅
-  const rows = await FrpCalculation.findAll({
-    where: { userId },
-    order: [["created_at", "DESC"]],
-    limit: 50,
-  });
-  return res.json({ ok: true, data: rows });
+  try {
+    const userId = req.user?.id ?? req.user?.sub ?? null;
+    if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
+
+    const rows = await FrpCalculation.findAll({
+      where: { userId },
+      order: [["created_at", "DESC"]],
+      limit: 50,
+    });
+
+    return res.json({ ok: true, data: rows });
+  } catch (e) {
+    console.error("Error in list:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
 };
+
