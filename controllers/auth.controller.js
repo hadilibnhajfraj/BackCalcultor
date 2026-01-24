@@ -186,37 +186,70 @@ exports.verifyEmail = async (req, res) => {
 };
 
 /** POST /auth/signin */
+/** POST /auth/signin */
 exports.signIn = async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty())
+  if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
+  }
 
   const { login, password } = req.body;
 
   try {
-    let user = await User.scope("withSecret").findOne({
-      where: where(fn("lower", col("email")), login.toLowerCase()),
-    });
-    if (!user)
-      user = await User.scope("withSecret").findOne({ where: { username: login } });
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+    const loginNorm = String(login || "").trim().toLowerCase();
+    if (!loginNorm || !password) {
+      return res.status(400).json({ error: "Missing login or password" });
+    }
 
+    // 1) Chercher par email (case-insensitive)
+    let user = await User.scope("withSecret").findOne({
+      where: where(fn("lower", col("email")), loginNorm),
+    });
+
+    // 2) Sinon chercher par username
+    if (!user) {
+      user = await User.scope("withSecret").findOne({
+        where: { username: String(login || "").trim() },
+      });
+    }
+
+    // 3) Si introuvable
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // 4) Email vérifié ?
     if (!user.email_verified) {
       return res.status(403).json({ error: "Email not verified" });
     }
 
+    // 5) Vérifier mot de passe
     const ok = await user.checkPassword(password);
-    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+    if (!ok) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
+    // 6) last_seen
+    user.last_seen = new Date();
+    await user.save();
+
+    // 7) Payload JWT
     const payload = {
       sub: user.id,
       email: user.email,
-      role: "user",
-      name: `${user.firstname} ${user.lastname}`,
+      role: user.role, // ✅ vrai rôle
       username: user.username,
+      firstname: user.firstname,
+      lastname: user.lastname,
     };
 
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken({ sub: user.id });
+
+    // ✅ IMPORTANT: toujours renvoyer user (peu importe role)
     return res.json({
+      ok: true,
+      message: "User logged in successfully",
       user: {
         id: user.id,
         username: user.username,
@@ -229,17 +262,20 @@ exports.signIn = async (req, res) => {
         country: user.country,
         zip: user.zip,
         adresse: user.adresse,
-        role: "user",
+        role: user.role,
         created_at: user.createdAt,
+        last_seen: user.last_seen,
       },
-      accessToken: signAccessToken(payload),
-      refreshToken: signRefreshToken({ sub: user.id }),
+      accessToken,
+      refreshToken,
     });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Server error", details: e.message });
   }
 };
+
+
 
 /** POST /auth/refresh */
 exports.refresh = async (req, res) => {
