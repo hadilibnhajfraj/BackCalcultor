@@ -2,19 +2,22 @@
 const { computeAll } = require("../compute/frp");
 const { FrpCalculation } = require("../models");
 
-// controllers/frp.controller.js
 exports.designAndSave = async (req, res) => {
   try {
-    console.log("[FRP] req.userId =", req.userId);
-    console.log("[FRP] req.user =", req.user);
     const payload = req.body || {};
+
+    // ✅ userId depuis middleware
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    // ✅ 1) calcul
     const out = computeAll(payload);
 
-    const userId = req.userId; // ✅ vient du middleware
-    if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
+    // ✅ 2) save (ne JAMAIS prendre userId depuis payload)
     const row = await FrpCalculation.create({
-      userId,
+      userId, // INTEGER
       elementType: out.elementType,
       projectName: payload.projectName ?? null,
       reference: payload.reference ?? null,
@@ -24,11 +27,10 @@ exports.designAndSave = async (req, res) => {
 
     return res.json({ ok: true, id: row.id, data: out });
   } catch (e) {
+    console.error("designAndSave error:", e);
     return res.status(400).json({ ok: false, error: e.message || "Erreur de calcul" });
   }
 };
-
-
 
 exports.design = (req, res) => {
   try {
@@ -42,7 +44,7 @@ exports.design = (req, res) => {
 
 exports.list = async (req, res) => {
   try {
-    const userId = req.userId; // ✅
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
 
     const rows = await FrpCalculation.findAll({
@@ -57,6 +59,3 @@ exports.list = async (req, res) => {
     return res.status(500).json({ ok: false, error: "Server error" });
   }
 };
-
-
-
