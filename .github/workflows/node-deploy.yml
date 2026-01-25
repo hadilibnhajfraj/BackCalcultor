@@ -1,0 +1,41 @@
+name: Deploy Node.js App
+
+on:
+  push:
+    branches:
+      - main  # Branche à surveiller pour les changements
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '16'  # Utilise la version de Node.js adaptée à ton projet
+
+    - name: Install dependencies
+      run: |
+        cd api  # Navigue vers le dossier de ton backend Node.js
+        npm install
+
+    - name: Run Tests (optionnel)
+      run: |
+        cd api
+        npm run test  # Si tu as des tests à exécuter
+
+    - name: Deploy to Server
+      run: |
+        # Utilise SSH pour déployer automatiquement vers le serveur
+        ssh root@your_vps_ip << 'EOF'
+        cd /var/www/ton-dossier-api
+        git pull origin main  # Récupère les derniers changements
+        npm install  # Installe les dépendances
+        pm2 restart app.js  # Redémarre l'application avec PM2
+        EOF
+      env:
+        DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
