@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const cookieParser = require("cookie-parser");
 const logger = require("morgan");
+const createError = require("http-errors");
 require("dotenv").config();
 
 const { sequelize } = require("./models"); // Vérifiez que vous avez bien connecté la base de données
@@ -55,7 +56,7 @@ app.use("/users", usersRouter);
 app.use("/auth", authRoutes);
 app.use("/frp", frpRouter);
 app.use("/admin", adminRouter); // Assurez-vous d'ajouter le routeur admin
-
+app.use("/api/pdf", require("./routes/pdf.routes"));
 // Gestion des erreurs 404
 app.use((req, res, next) => next(createError(404)));
 

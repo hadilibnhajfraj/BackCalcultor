@@ -200,6 +200,9 @@ function computeAll(input) {
 
   const frp_long = {
     Af_mm2,
+    // 🔥 AJOUT ICI
+  bar_diam_mm: input.frp_long?.bar_diam_mm,
+  spacing_mm: input.frp_long?.spacing_mm,
     Ef_MPa: input.frp_long?.Ef_MPa ?? 53000,
     ffu_MPa: input.frp_long?.ffu_MPa ?? 1060,
     phi_f: input.frp_long?.phi_f ?? 0.9,
