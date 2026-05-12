@@ -1,232 +1,476 @@
-// compute/frp.js (CommonJS)
+// compute/frp.js
+// VERSION EUROCODE PRF CORRIGÉE
 
-/** Utils */
+/** =========================================================
+ * UTILITAIRES
+ * ======================================================= */
+
 const Nmm_to_kNm = (x) => x / 1e6;
+
 const areaFromBars = (diam_mm, nBars) =>
-  (Math.PI * (diam_mm ** 2) / 4) * nBars;
-const areaPerMeter = (diam_mm, s_mm) =>
-  (1000 / s_mm) * (Math.PI * (diam_mm ** 2) / 4);
+  (Math.PI * diam_mm ** 2) / 4 * nBars;
 
-function alpha1_from_fc(fc) {
-  return Math.max(0.67, 0.85 - 0.0015 * fc);
-}
-function beta1_from_fc(fc) {
-  return Math.max(0.67, 0.97 - 0.0025 * fc);
-}
+const areaPerMeter = (diam_mm, spacing_mm) =>
+  (1000 / spacing_mm) *
+  ((Math.PI * diam_mm ** 2) / 4);
 
-/**
- * rho_min estimation (simple)
- */
-function rho_min_from_fc_fcuf(fc, ffu) {
-  if (!fc || !ffu) return null;
-  return (1.4 * Math.sqrt(fc)) / ffu;
-}
+/** =========================================================
+ * FLEXION ELU
+ * ======================================================= */
 
-/** ---------- FLEXION (ELU) ---------- */
-function computeFlexure({ loads: { Mu_kNm }, geometry: { b_mm, d_mm }, concrete, frp_long }) {
-  const fc = concrete.fc_MPa;
-  const eps_cu = concrete.eps_cu ?? 0.0035;
-
-  const alpha1 = concrete.alpha1 ?? alpha1_from_fc(fc);
-  const beta1 = concrete.beta1 ?? beta1_from_fc(fc);
-  const phiC = concrete.phi_c ?? 0.65;
-
-  const Af = frp_long.Af_mm2;
-  const Ef = frp_long.Ef_MPa;
-  const ffu = frp_long.ffu_MPa;
-  const phiF = frp_long.phi_f ?? 0.9;
-
-  // ratios
-  const rho_frp = (b_mm && d_mm) ? Af / (b_mm * d_mm) : null;
-  const eps_fpu = ffu && Ef ? ffu / Ef : null;
-
-  let rho_frpb = null;
-  if (eps_fpu && fc && phiF && phiC) {
-    rho_frpb =
-      alpha1 *
-      beta1 *
-      (phiC / phiF) *
-      (fc / ffu) *
-      (eps_cu / (eps_cu + eps_fpu));
-  }
-
-  const rho_min = rho_min_from_fc_fcuf(fc, ffu);
-
-  // equilibrium iterative T = C
-  let c_lo = 1e-6;
-  let c_hi = Math.max(0.99 * d_mm, 1);
-  let c = 0.5 * (c_lo + c_hi);
-  let T = 0, C = 1, eps_frp = 0, f_frp_raw = 0, f_frp = 0;
-
-  for (let it = 0; it < 80; it++) {
-    eps_frp = (eps_cu * (d_mm - c)) / c;
-    f_frp_raw = Ef * eps_frp;
-    f_frp = Math.min(f_frp_raw, ffu || f_frp_raw);
-
-    T = Af * phiF * f_frp; // N
-    C = alpha1 * fc * b_mm * (beta1 * c); // N
-
-    if (Math.abs(T - C) / Math.max(1, C) < 1e-6) break;
-    if (T > C) c_lo = c; else c_hi = c;
-    c = 0.5 * (c_lo + c_hi);
-  }
-
-  const z = d_mm - (beta1 * c) / 2;
-  const Mn_kNm = Nmm_to_kNm(T * z);
-  const phiMn_kNm = phiF * Mn_kNm;
-
-  const eps_fu = ffu && Ef ? ffu / Ef : null;
-  const frpRuptureControls = ffu ? f_frp_raw >= ffu - 1e-9 : false;
-
-  let failureMode = "Section contrôlée par compression (béton)";
-  let rhoCompareSymbol = "—";
-  if (rho_frp != null && rho_frpb != null) {
-    if (rho_frp < rho_frpb) {
-      rhoCompareSymbol = "<";
-      failureMode = "Tension failure (rupture des barres GFRP)";
-    } else if (rho_frp > rho_frpb) {
-      rhoCompareSymbol = ">";
-      failureMode = "Compression failure (écrasement du béton)";
-    } else {
-      rhoCompareSymbol = "≈";
-      failureMode = "Section équilibrée";
-    }
-  } else if (frpRuptureControls) {
-    failureMode = "Section en traction (Rupture FRP)";
-  }
-
-  const equilibrium_ok = Math.abs(T - C) / Math.max(1, C) < 1e-3;
-
-  return {
-    c_mm: c,
-    z_mm: z,
-    T_N: T,
-    C_N: C,
-    eps_frp,
-    eps_fu,
-    f_frp,
-    f_frp_raw,
-    ffu,
-    Mn_kNm,
-    phiMn_kNm,
-    equilibrium_ok,
-
-    rho_frp,
-    rho_frpb,
-    rho_min,
-    rhoCompareSymbol,
-    failureMode,
-
-    frpRuptureControls,
-    ok: phiMn_kNm >= Mu_kNm,
-  };
-}
-
-/** ---------- FISSURATION ---------- */
-function computeCracking({ geometry: { b_mm, h_mm }, concrete: { fc_MPa } }) {
-  const fr = 0.6 * Math.sqrt(fc_MPa);
-  const I = (b_mm * h_mm ** 3) / 12;
-  const y = h_mm / 2;
-  const Mcr_kNm = Nmm_to_kNm((fr * I) / y);
-  return { fr_MPa: fr, I_mm4: I, y_mm: y, Mcr_kNm };
-}
-
-/** ---------- Largeur de fissure ---------- */
-function computeCrackWidth({ geometry: { h_mm, d_mm }, frp_long, service }) {
-  const kb = service.kb ?? 1.2;
-  const h2_over_h = service.h2_over_h ?? 0.9;
-  const w_lim_mm = service.w_lim_mm ?? 0.3;
-
-  const fm = 0.35 * frp_long.ffu_MPa;
-  const w =
-    2.2 *
-    kb *
-    (fm / frp_long.Ef_MPa) *
-    h2_over_h *
-    Math.sqrt(d_mm * frp_long.Af_mm2);
-
-  return { fm_MPa: fm, w_mm: w, w_lim_mm, ok: w <= w_lim_mm };
-}
-
-/** ---------- Cisaillement ---------- */
-function computeShear({
-  loads: { Vu_kN }, geometry: { b_mm, d_mm }, concrete: { fc_MPa }, frp_shear,
+function computeFlexure({
+  loads,
+  geometry,
+  concrete,
+  frp_long,
 }) {
-  const Vc_N = 0.17 * Math.sqrt(fc_MPa) * b_mm * d_mm;
-  let Vfrp_N = 0;
 
-  if (frp_shear?.hasStirrups) {
-    const Afv = frp_shear.Afv_mm2 ?? 0;
-    const s = frp_shear.s_mm ?? 100;
-    const phi = frp_shear.phi_v ?? 0.75;
-    const ffv = frp_shear.ffv_MPa ?? 265;
-    const theta = ((frp_shear.theta_deg ?? 90) * Math.PI) / 180;
-    const cot = 1 / Math.tan(theta);
-    Vfrp_N = (Afv * phi * ffv * d_mm * cot) / s;
+  /** =============================
+   * ÉTAPE 0 : DONNÉES
+   * =========================== */
+
+  const { Mu_kNm } = loads;
+
+  const {
+    b_mm,
+    h_mm,
+    d_mm,
+  } = geometry;
+
+  /** Béton */
+  const fck = concrete.fck_MPa;
+  const Ec = concrete.Ec_MPa;
+
+  const gamma_c = concrete.gamma_c ?? 1.5;
+
+  const eps_cu =
+    concrete.eps_cu ?? 0.0035;
+
+  /** PRF */
+  const fPRFk = frp_long.fPRFk_MPa;
+
+  const EPRF =
+    frp_long.EPRF_MPa;
+
+  const gamma_frp =
+    frp_long.gamma_frp ?? 1.15;
+
+  const alpha_PRF =
+    frp_long.alpha_frp ?? 0.85;
+
+  const eps_u =
+    frp_long.eps_u ??
+    fPRFk / EPRF;
+
+  const APRF =
+    frp_long.Af_mm2;
+
+  /** =============================
+   * ÉTAPE 1 : PROPRIÉTÉS
+   * =========================== */
+
+  /** Résistance PRF */
+  const fPRFd =
+    (alpha_PRF * fPRFk) /
+    gamma_frp;
+
+  /** Résistance béton */
+  const fcd =
+    fck / gamma_c;
+
+  /** =============================
+   * ÉTAPE 2 : TAUX D'ARMATURE
+   * =========================== */
+
+  /** Taux réel */
+  const rhoPRF =
+    APRF / (b_mm * d_mm);
+
+  /** Taux équilibré */
+  const rhoPRF_b =
+    (0.85 * fcd / fPRFd) *
+    (eps_cu / (eps_cu + eps_u));
+
+  /** Détermination du mode */
+  let mode = "";
+
+  if (rhoPRF < rhoPRF_b) {
+    mode = "traction";
+  } else if (rhoPRF > rhoPRF_b) {
+    mode = "compression";
+  } else {
+    mode = "equilibre";
   }
 
-  const Vn_kN = (Vc_N + Vfrp_N) / 1000;
+  /** =============================
+   * ÉTAPE 3 : VÉRIFICATION ELU
+   * =========================== */
+
+  let x_mm = 0;
+  let z_mm = 0;
+
+  let epsPRF = 0;
+  let sigmaPRF = 0;
+
+  let MRd_kNm = 0;
+
+  /** -----------------------------
+   * CAS TRACTION
+   * --------------------------- */
+
+  if (mode === "traction") {
+
+    /** εPRF = εu */
+    epsPRF = eps_u;
+
+    /** x */
+    x_mm =
+      (APRF * fPRFd) /
+      (0.85 * fcd * b_mm);
+
+    /** bras de levier */
+    z_mm =
+      d_mm - 0.4 * x_mm;
+
+    /** σPRF */
+    sigmaPRF = fPRFd;
+
+    /** Moment résistant */
+    MRd_kNm =
+      Nmm_to_kNm(
+        APRF *
+        fPRFd *
+        z_mm
+      );
+
+  }
+
+  /** -----------------------------
+   * CAS COMPRESSION
+   * --------------------------- */
+
+  else {
+
+    /** x */
+    x_mm =
+      (APRF * fPRFd) /
+      (0.85 * fcd * b_mm);
+
+    /** εPRF */
+    epsPRF =
+      eps_cu *
+      ((d_mm - x_mm) / x_mm);
+
+    /** σPRF */
+    sigmaPRF =
+      EPRF * epsPRF;
+
+    /** bras de levier */
+    z_mm =
+      d_mm - 0.4 * x_mm;
+
+    /** Moment résistant */
+    MRd_kNm =
+      Nmm_to_kNm(
+        APRF *
+        sigmaPRF *
+        z_mm
+      );
+  }
+
+  /** =============================
+   * ARMATURE MINIMALE
+   * =========================== */
+
+  const fctm =
+    concrete.fctm_MPa ?? 2.9;
+
+  const k =
+    concrete.k ?? 0.8;
+
+  const Amin_mm2 =
+    k *
+    (fctm / fPRFd) *
+    b_mm *
+    d_mm;
+
+  /** =============================
+   * CONDITION ELU
+   * =========================== */
+
+  const ELU_OK =
+    Mu_kNm <= MRd_kNm;
+
   return {
-    Vc_kN: Vc_N / 1000,
-    Vfrp_kN: Vfrp_N / 1000,
-    Vn_kN,
-    Vu_kN,
-    ok: Vn_kN >= Vu_kN,
-    note: frp_shear?.hasStirrups ? "Étriers FRP" : "Sans étriers",
+
+    /** matériaux */
+    fcd,
+    fPRFd,
+
+    /** taux */
+    rhoPRF,
+    rhoPRF_b,
+
+    /** mode */
+    mode,
+
+    /** déformations */
+    epsPRF,
+
+    /** contraintes */
+    sigmaPRF,
+
+    /** géométrie */
+    x_mm,
+    z_mm,
+
+    /** résistance */
+    MRd_kNm,
+
+    /** armature mini */
+    Amin_mm2,
+
+    /** demande */
+    Mu_kNm,
+
+    /** vérification */
+    ok: ELU_OK,
   };
 }
 
-/** ---------- Wrapper global ---------- */
-function computeAll(input) {
-  const elementType = input.elementType ?? "dalle";
-  const loads = input.loads ?? { Mu_kNm: 0, Vu_kN: 0 };
-  const geometry = input.geometry ?? { b_mm: 1000, h_mm: 100, d_mm: 90 };
-  const concrete = input.concrete ?? { fc_MPa: 35, eps_cu: 0.0035 };
-  const frp_shear = input.frp_shear ?? {};
-  const service = input.service ?? {};
+/** =========================================================
+ * ELS
+ * ======================================================= */
 
-  let Af_mm2 = input.frp_long?.Af_mm2;
+function computeService({
+  loads,
+  geometry,
+  concrete,
+  frp_long,
+  service,
+}) {
+
+  const {
+    Mser_kNm,
+    q_kN_m,
+    L_m,
+  } = loads;
+
+  const {
+    b_mm,
+    d_mm,
+  } = geometry;
+
+  const Ec =
+    concrete.Ec_MPa;
+
+  const APRF =
+    frp_long.Af_mm2;
+
+  const fPRFk =
+    frp_long.fPRFk_MPa;
+
+  /** Bras de levier */
+  const z_mm =
+    0.9 * d_mm;
+
+  /** =============================
+   * CONTRAINTE PRF
+   * =========================== */
+
+  const sigmaPRF_ser =
+    (Mser_kNm * 1e6) /
+    (APRF * z_mm);
+
+  /** =============================
+   * FISSURATION
+   * wk = srm × (εPRF - εcm)
+   * =========================== */
+
+  const srm_mm =
+  Number(service.srm_mm ?? 200);
+
+  const epsPRF =
+    sigmaPRF_ser /
+    frp_long.EPRF_MPa;
+
+ const eps_cm =
+  Number(service.eps_cm ?? 0.0001);
+
+  const wk_mm =
+    srm_mm *
+    (epsPRF - eps_cm);
+
+  /** =============================
+   * FLÈCHE
+   * =========================== */
+
+  const Ie =
+    (b_mm * d_mm ** 3) / 12;
+
+  const L_mm =
+    L_m * 1000;
+
+  const fleche_mm =
+    (
+      5 *
+      q_kN_m *
+      L_mm ** 4
+    ) /
+    (
+      384 *
+      Ec *
+      Ie *
+      1000
+    );
+
+  /** =============================
+   * CONDITIONS
+   * =========================== */
+
+  const k =
+    service.k ?? 0.6;
+
+  const sigma_lim =
+    k * fPRFk;
+
+  const wk_lim =
+    service.w_lim_mm ?? 0.5;
+
+  const fleche_lim =
+    L_mm / 250;
+
+  const sigma_ok =
+    sigmaPRF_ser <= sigma_lim;
+
+  const fissure_ok =
+    wk_mm <= wk_lim;
+
+  const fleche_ok =
+    fleche_mm <= fleche_lim;
+
+  return {
+
+    sigmaPRF_ser,
+    sigma_lim,
+
+    wk_mm,
+    wk_lim,
+
+    fleche_mm,
+    fleche_lim,
+
+    sigma_ok,
+    fissure_ok,
+    fleche_ok,
+  };
+}
+
+/** =========================================================
+ * WRAPPER
+ * ======================================================= */
+
+function computeAll(input) {
+
+  const loads =
+    input.loads ?? {};
+
+  const geometry =
+    input.geometry ?? {};
+
+  const concrete =
+    input.concrete ?? {};
+
+  const service =
+    input.service ?? {};
+
+  /** Armature PRF */
+
+  let Af_mm2 =
+    input.frp_long?.Af_mm2;
+
   if (!Af_mm2) {
-    if (elementType === "dalle") {
-      const d = input.frp_long?.bar_diam_mm ?? 8;
-      const s = input.frp_long?.spacing_mm ?? 200;
-      Af_mm2 = areaPerMeter(d, s);
-    } else {
-      const d = input.frp_long?.bar_diam_mm ?? 12;
-      const n = input.frp_long?.nBars ?? 5;
-      Af_mm2 = areaFromBars(d, n);
-    }
+
+    const diam =
+      input.frp_long?.bar_diam_mm ?? 10;
+
+    const spacing =
+      input.frp_long?.spacing_mm ?? 200;
+
+    Af_mm2 =
+      areaPerMeter(
+        diam,
+        spacing
+      );
   }
 
   const frp_long = {
+
     Af_mm2,
-    // 🔥 AJOUT ICI
-  bar_diam_mm: input.frp_long?.bar_diam_mm,
-  spacing_mm: input.frp_long?.spacing_mm,
-    Ef_MPa: input.frp_long?.Ef_MPa ?? 53000,
-    ffu_MPa: input.frp_long?.ffu_MPa ?? 1060,
-    phi_f: input.frp_long?.phi_f ?? 0.9,
+
+    fPRFk_MPa:
+      input.frp_long?.fPRFk_MPa ?? 1000,
+
+    EPRF_MPa:
+      input.frp_long?.EPRF_MPa ?? 50000,
+
+    gamma_frp:
+      input.frp_long?.gamma_frp ?? 1.15,
+
+    alpha_frp:
+      input.frp_long?.alpha_frp ?? 0.85,
   };
 
-  const flexure = computeFlexure({ loads, geometry, concrete, frp_long });
-  const cracking = computeCracking({ geometry, concrete });
-  const crack_width = computeCrackWidth({ geometry, frp_long, service });
-  const shear = computeShear({ loads, geometry, concrete, frp_shear });
+  /** ELU */
+  const flexure =
+    computeFlexure({
+      loads,
+      geometry,
+      concrete,
+      frp_long,
+    });
+
+  /** ELS */
+  const serviceCheck =
+    computeService({
+      loads,
+      geometry,
+      concrete,
+      frp_long,
+      service,
+    });
 
   return {
-    elementType,
-    inputs: { loads, geometry, concrete, frp_long, frp_shear, service },
+
+    inputs: {
+      loads,
+      geometry,
+      concrete,
+      frp_long,
+    },
+
     flexure,
-    cracking: { ...cracking, Mu_gt_1p5Mcr: loads.Mu_kNm > 1.5 * cracking.Mcr_kNm },
-    crack_width,
-    shear,
+
+    service:
+      serviceCheck,
+
     summary: {
-      flexion_OK: flexure.ok,
-      fissuration_OK: loads.Mu_kNm > 1.5 * cracking.Mcr_kNm,
-      largeur_fissure_OK: crack_width.ok,
-      cisaillement_OK: shear.ok,
+
+      ELU:
+        flexure.ok,
+
+      ELS_contrainte:
+        serviceCheck.sigma_ok,
+
+      ELS_fissuration:
+        serviceCheck.fissure_ok,
+
+      ELS_fleche:
+        serviceCheck.fleche_ok,
     },
   };
 }
 
-module.exports = { computeAll };
+module.exports = {
+  computeAll,
+};
